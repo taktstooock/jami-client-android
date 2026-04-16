@@ -260,7 +260,10 @@ class DRingService : Service() {
         val newTransport = getActiveTransport()
         val oldTransport = lastActiveTransport
         lastActiveTransport = newTransport
-        if (oldTransport != ActiveTransport.WIFI || newTransport != ActiveTransport.CELLULAR) {
+        val shouldTriggerFastReconnect =
+            (oldTransport == ActiveTransport.WIFI && newTransport == ActiveTransport.CELLULAR) ||
+            (oldTransport == ActiveTransport.CELLULAR && newTransport == ActiveTransport.WIFI)
+        if (!shouldTriggerFastReconnect) {
             return
         }
         val now = SystemClock.elapsedRealtime()
