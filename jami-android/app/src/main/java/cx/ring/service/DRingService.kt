@@ -91,6 +91,13 @@ class DRingService : Service() {
     private val mHandler = Handler(Looper.myLooper()!!)
     private val mDisposableBag = CompositeDisposable()
     private val mConnectivityChecker = Runnable { updateConnectivityState() }
+    private val mReactivateAccounts = Runnable {
+        if (mPreferencesService.hasNetworkConnected()) {
+            mAccountService.setAccountsActive(true)
+        }
+    }
+    private var lastActiveTransport = ActiveTransport.NONE
+    private var lastFastReconnectTrigger = 0L
 
     private val monitor = object : NetworkCallback() {
         private val networkRequest: NetworkRequest = NetworkRequest.Builder()
@@ -123,6 +130,17 @@ class DRingService : Service() {
         override fun onAvailable(network: Network) {
             Log.w(TAG, "onAvailable $network")
             updateConnectivityState(true)
+            maybeTriggerFastReconnect("onAvailable")
+        }
+
+        override fun onLost(network: Network) {
+            Log.w(TAG, "onLost $network")
+            updateConnectivityState()
+            maybeTriggerFastReconnect("onLost")
+        }
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            maybeTriggerFastReconnect("onCapabilitiesChanged")
         }
 
         override fun onUnavailable() {
@@ -155,6 +173,7 @@ class DRingService : Service() {
         super.onCreate()
         Log.i(TAG, "onCreate")
         isRunning = true
+        lastActiveTransport = getActiveTransport()
         if (mDeviceRuntimeService.hasContactPermission()) {
             contentResolver.registerContentObserver(ContactsContract.Contacts.CONTENT_URI, true, contactContentObserver)
         }
@@ -177,6 +196,7 @@ class DRingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "onDestroy()")
+        mHandler.removeCallbacks(mReactivateAccounts)
         unregisterReceiver(receiver)
         contentResolver.unregisterContentObserver(contactContentObserver)
         monitor.disable(this)
@@ -236,6 +256,36 @@ class DRingService : Service() {
         if (mDaemonService.isStarted) {
             mAccountService.setAccountsActive(isConnected)
             mHardwareService.connectivityChanged(isConnected)
+        }
+    }
+
+    private fun maybeTriggerFastReconnect(source: String) {
+        val newTransport = getActiveTransport()
+        val oldTransport = lastActiveTransport
+        lastActiveTransport = newTransport
+        if (oldTransport != ActiveTransport.WIFI || newTransport != ActiveTransport.CELLULAR) {
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastFastReconnectTrigger < FAST_RECONNECT_DEBOUNCE_MS) {
+            return
+        }
+        lastFastReconnectTrigger = now
+        Log.i(TAG, "Fast reconnect trigger from $source: $oldTransport -> $newTransport")
+        mHardwareService.connectivityChanged(true)
+        mHandler.removeCallbacks(mReactivateAccounts)
+        mAccountService.setAccountsActive(false)
+        mHandler.postDelayed(mReactivateAccounts, FAST_RECONNECT_REACTIVATE_DELAY_MS)
+    }
+
+    private fun getActiveTransport(): ActiveTransport {
+        val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager? ?: return ActiveTransport.NONE
+        val network = connectivityManager.activeNetwork ?: return ActiveTransport.NONE
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return ActiveTransport.NONE
+        return when {
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> ActiveTransport.WIFI
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> ActiveTransport.CELLULAR
+            else -> ActiveTransport.OTHER
         }
     }
 
@@ -367,6 +417,8 @@ class DRingService : Service() {
 
     companion object {
         private val TAG = DRingService::class.java.simpleName
+        private const val FAST_RECONNECT_REACTIVATE_DELAY_MS = 500L
+        private const val FAST_RECONNECT_DEBOUNCE_MS = 2_000L
         const val ACTION_TRUST_REQUEST_ACCEPT = BuildConfig.APPLICATION_ID + ".action.TRUST_REQUEST_ACCEPT"
         const val ACTION_TRUST_REQUEST_REFUSE = BuildConfig.APPLICATION_ID + ".action.TRUST_REQUEST_REFUSE"
         const val ACTION_TRUST_REQUEST_BLOCK = BuildConfig.APPLICATION_ID + ".action.TRUST_REQUEST_BLOCK"
@@ -384,5 +436,9 @@ class DRingService : Service() {
         const val KEY_TEXT_REPLY = "textReply"
         private const val NOTIFICATION_ID = 1
         var isRunning = false
+    }
+
+    private enum class ActiveTransport {
+        NONE, WIFI, CELLULAR, OTHER
     }
 }
