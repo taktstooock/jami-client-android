@@ -88,14 +88,10 @@ class DRingService : Service() {
     @Singleton
     lateinit var mConversationFacade: ConversationFacade
 
-    private val mHandler = Handler(Looper.myLooper()!!)
+    private val mHandler = Handler(Looper.getMainLooper())
     private val mDisposableBag = CompositeDisposable()
     private val mConnectivityChecker = Runnable { updateConnectivityState() }
-    private val mReactivateAccounts = Runnable {
-        if (mPreferencesService.hasNetworkConnected()) {
-            mAccountService.setAccountsActive(true)
-        }
-    }
+    private val mReactivateAccounts = Runnable { updateConnectivityState() }
     private var lastActiveTransport = ActiveTransport.NONE
     private var lastFastReconnectTrigger = 0L
 
@@ -259,6 +255,7 @@ class DRingService : Service() {
         }
     }
 
+    @Synchronized
     private fun maybeTriggerFastReconnect(source: String) {
         val newTransport = getActiveTransport()
         val oldTransport = lastActiveTransport
@@ -417,7 +414,9 @@ class DRingService : Service() {
 
     companion object {
         private val TAG = DRingService::class.java.simpleName
+        // 500ms gives the daemon enough time to drop old routes before immediate re-activation.
         private const val FAST_RECONNECT_REACTIVATE_DELAY_MS = 500L
+        // Debounce repeated callback bursts for one network switch event.
         private const val FAST_RECONNECT_DEBOUNCE_MS = 2_000L
         const val ACTION_TRUST_REQUEST_ACCEPT = BuildConfig.APPLICATION_ID + ".action.TRUST_REQUEST_ACCEPT"
         const val ACTION_TRUST_REQUEST_REFUSE = BuildConfig.APPLICATION_ID + ".action.TRUST_REQUEST_REFUSE"
