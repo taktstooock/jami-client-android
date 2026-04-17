@@ -1,0 +1,23 @@
+services:
+  jami-builder:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+    image: jami-builder-image
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - .:/home/jenkins/workspace
+      - jami-gradle-cache:/home/jenkins/.gradle
+    working_dir: /home/jenkins/workspace
+    environment:
+      - LANG=en_US.utf8
+      - LC_ALL=en_US.utf8
+    tty: true
+    stdin_open: true
+
+volumes:
+  jami-gradle-cache:
+
