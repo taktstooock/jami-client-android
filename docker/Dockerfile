@@ -114,8 +114,20 @@ RUN echo "no" | avdmanager --verbose create avd --force --name "${EMULATOR_NAME}
 # It will helps with permissions on shared volumes.
 ARG HOST_UID
 ARG HOST_GID
-RUN groupadd -g $HOST_GID jenkins && \
-    useradd --no-log-init --system --uid $HOST_UID --gid jenkins jenkins --create-home
+RUN if getent group $HOST_GID; then \
+        # GID 1000が存在する場合、そのグループ名をjenkinsに変更
+        groupmod -n jenkins $(getent group $HOST_GID | cut -d: -f1); \
+    else \
+        # 存在しない場合、新規作成
+        groupadd -g $HOST_GID jenkins; \
+    fi && \
+    if getent passwd $HOST_UID; then \
+        # UID 1000が存在する場合、そのユーザー名をjenkinsに変更し、ホームディレクトリを再設定
+        usermod -l jenkins -g $HOST_GID -d /home/jenkins -m $(getent passwd $HOST_UID | cut -d: -f1); \
+    else \
+        # 存在しない場合、新規作成
+        useradd --no-log-init --system --uid $HOST_UID --gid jenkins jenkins --create-home; \
+    fi
 
 # Define environment variables.
 ENV JAVA_HOME=/opt/java/openjdk/
